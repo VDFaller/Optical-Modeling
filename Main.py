@@ -1,20 +1,25 @@
 '''
 Demo to show use of the engineering Formatter.
 '''
-from PyQt5 import QtGui, QtWidgets, QtCore
 import sys
 import random
-from numpy import arange, sin, pi
-import MainUI
-import matplotlib.pyplot as plt
+from math import floor, ceil
 
+from PyQt5 import QtWidgets
+import pandas as pd
+from numpy import arange, sin, pi, interp
+import numpy as np
 from matplotlib.backend_bases import key_press_handler
 from matplotlib.backends.backend_qt5agg import (FigureCanvasQTAgg, NavigationToolbar2QT)
 from matplotlib.figure import Figure
+# import xlrd
+import tmm_core as tmm
 
-import xlrd
-import tmm
 from numpy.core.numeric import inf
+
+import MainUI
+
+print("boop")
 
 
 class MPlibWidget(QtWidgets.QWidget):
@@ -67,38 +72,96 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
     def __init__(self, parent = None):
         super(MW, self).__init__(parent)
         self.setupUi(self)
+        self.low_wavelength = 300
+        self.high_wavelength = 1700
+        self.increment = .2
         
         self.static = MplCanvas(self.GraphFrame)
         
         self.verticalLayout.addWidget(self.static)
         self.plot.clicked.connect(self.plot_clicked)
-        book = xlrd.open_workbook('H:/Perrysburg Users/VFaller/Public/Tasks/VF059 - Optical Modeling/modeling.xlsx')
-        self.sh = book.sheet_by_index(0)
-        self.wavelength = self.sh.col_values(0, 1)
+        # book = xlrd.open_workbook('H:/Perrysburg Users/VFaller/Public/Tasks/VF059 - Optical Modeling/modeling.xlsx')
+        # self.sh = book.sheet_by_index(0)
+        
+        # self.wavelength = self.sh.col_values(0, 1)
+        self.materials = {}
     
     def get_column(self, header):
         for col_index in range(self.sh.ncols):
             if self.sh.cell(0, col_index).value == header:
                 return(col_index)
+            
+    def add_material(self, film, path):
+        if film not in self.materials:
+            self.materials[film] =  material(path)
+
+    def set_wavelength(self, low, high):
+        self.low_wavelength = low
+        self.high_wavelength = high
     
     def plot_clicked(self):
         
-        layers = [15, 14, 13, 12]
-        layer_map = [map(complex, self.sh.col_values(i, 1)) for i in layers]       
-        thkCdTe = int(self.CdTeThickness.text())
-        thkCdSe = int(self.CdSeThickness.text())
+        self.add_material("TCO", 'C:/Writing Programs/Optical Modeling/Materials/Semiconductor/TCO.csv')
+        self.add_material("CdSe", 'C:/Writing Programs/Optical Modeling/Materials/Semiconductor/CdSe.csv')
+        self.add_material("CdTe", 'C:/Writing Programs/Optical Modeling/Materials/Semiconductor/CdTe.csv')
+        self.add_material("Air", 'C:/Writing Programs/Optical Modeling/Materials/Semiconductor/Air.csv')
+        layers = ["Air", "CdTe", "CdSe", "TCO"]
+        index_array = np.array([self.materials["Air"].nc,self.materials["CdTe"].nc,self.materials["CdSe"].nc,self.materials["TCO"].nc]).T
+        self.wavelength = np.array(self.materials["TCO"].wv_raw)
+        #self.add_material("Sapphire", 'C:/Writing Programs/Optical Modeling/Materials/Dielectric/Sapphire.csv')
+        #layers = ["Sapphire"]
+        #self.wavelength = self.materials["Sapphire"].wv_raw
+        # wavelength = frange(self.low_wavelength, self.high_wavelength, self.increment)
         
-        d_list = [inf, thkCdSe, thkCdTe, inf]
+        #layer_map = [map(complex, self.materials[i].n_raw, self.materials[i].k_raw) for i in layers]
+        
+             
+        thkcdte = int(self.CdTeThickness.text())
+        thkcdse = int(self.CdSeThickness.text())
+        
+        d_list = [inf, thkcdse, thkcdte, inf]
         theta0 = 0
-        n_list = zip(*layer_map)
+        #n_list = zip(*layer_map)
+        # n_list = map(interp(wv, ))
         
-        R = [tmm.unpolarized_RT(next(n_list), d_list, theta0, wv)['R'] for wv in self.wavelength]
+        #R = [tmm.unpolarized_RT(next(n_list), d_list, theta0, wv)['R'] for wv in self.wavelength]
+        #T = [tmm.unpolarized_RT(next(n_list), d_list, theta0, wv)['T'] for wv in self.wavelength]
+        
+        R = tmm.unpolarized_RT(index_array, d_list, theta0, self.wavelength)['R']
         
         self.static.axis.plot(self.wavelength, R)
         self.static.canvas.draw()
+
+
+class material():
+    def __init__(self, path):
+        f = pd.read_csv(path)
+        self.wv_raw = f.wv
+        self.nc = f.n+f.k*1j  #complex refractive index
+        #self.n_raw = f.n
+        #self.k_raw = f.k;
         
-    
-        
+
+                
+    def interpolate(self, start_wavelength, end_wavelength, increment = .2):
+        start = max(floor(self.wv[0]/increment)*increment, start_wavelength)
+        end = min(ceil(self.wv[-1]/increment)*increment, end_wavelength)
+        wvrange = self.frange(start, end, increment)
+        self.wv = []
+        self.n = []
+        self.k = []
+        for i in wvrange:
+            self.wv.append(self.wvrange[i])
+            self.n.append(interp(i, self.wv_raw, self.n_raw))
+            self.k.append(interp(i, self.wv_raw, self.k_raw))
+
+
+def frange(x, y, jump):
+        while x < y:
+            yield(x)
+            x += jump
+
+               
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     form = MW()
