@@ -2,10 +2,7 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="8c1666ac-33f4-4e70-a393-1259c2069566" name="Default" comment="">
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/Optical Modeling.iml" afterPath="$PROJECT_DIR$/.idea/Optical Modeling.iml" />
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/misc.xml" afterPath="$PROJECT_DIR$/.idea/misc.xml" />
       <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/workspace.xml" afterPath="$PROJECT_DIR$/.idea/workspace.xml" />
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/Main.py" afterPath="$PROJECT_DIR$/Main.py" />
     </list>
     <ignored path="Optical Modeling.iws" />
     <ignored path=".idea/workspace.xml" />
@@ -295,6 +292,13 @@
       <option name="number" value="Default" />
       <updated>1441827856788</updated>
     </task>
+    <task id="LOCAL-00001" summary="Made work with Anaconda and (hopefully) future proofed it as well as added back T&amp;A plotting to the graph.">
+      <created>1449765656838</created>
+      <option name="number" value="00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1449765656838</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="ToolWindowManager">
