@@ -3,30 +3,25 @@ UI Program to create an optical modeler
 """
 import sys
 import random
+import MainUI
+import tmm_core as tmm
 from math import floor, ceil
 
 from PyQt5 import QtWidgets
 import pandas as pd
-from numpy import arange, sin, pi, interp
 import numpy as np
 import matplotlib
+from scipy.interpolate import interp1d
 matplotlib.use("Qt5Agg")  # required currently because matplotlib uses PyQt4
 from matplotlib.backend_bases import key_press_handler
 from matplotlib.backends.backend_qt5agg import (FigureCanvasQTAgg, NavigationToolbar2QT)
 from matplotlib.figure import Figure
-# import xlrd
-import tmm_core as tmm
-
 from numpy.core.numeric import inf
 
-import MainUI
 
-print("boop")
-
-
-class MPlibWidget(QtWidgets.QWidget):
-    def __init__(self, parent = None):
-        super(MPlibWidget, self).__init__(parent)
+class MPLibWidget(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super(MPLibWidget, self).__init__(parent)
         
         self.figure = Figure()
         self.canvas = FigureCanvasQTAgg(self.figure)
@@ -55,115 +50,79 @@ class MPlibWidget(QtWidgets.QWidget):
         pass
 
 
-class MplCanvas(MPlibWidget):
-    """Simple canvas with a sine plot."""
-    def compute_initial_figure(self):
-        t = arange(0.0, 3.0, 0.01)
-        s = sin(2*pi*t)
-        self.axis.plot(t, s)
-
-    def update_figure(self):
-        # Build a list of 4 random integers between 0 and 10 (both inclusive)
-        l = [random.randint(0, 10) for i in range(4)]
-
-        self.axis.plot([0, 1, 2, 3], l, 'r')
-        self.canvas.draw()
-
-
 class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
-    def __init__(self, parent = None):
+    def __init__(self, parent=None):
         super(MW, self).__init__(parent)
         self.setupUi(self)
-        self.low_wavelength = 300
-        self.high_wavelength = 1700
+        self.wavelength = np.arange(300, 1700, 1)
         self.increment = .2
+        self.index_array = np.array([])
 
-        self.static = MplCanvas(self.GraphFrame)
+        self.widget = MPLibWidget(self.GraphFrame)
 
-        self.verticalLayout.addWidget(self.static)
+        self.verticalLayout.addWidget(self.widget)
         self.plot.clicked.connect(self.plot_clicked)
-        # book = xlrd.open_workbook('H:/Perrysburg Users/VFaller/Public/Tasks/VF059 - Optical Modeling/modeling.xlsx')
-        # self.sh = book.sheet_by_index(0)
-
-        # self.wavelength = self.sh.col_values(0, 1)
-        self.materials = {}
-
-    def get_column(self, header):
-        for col_index in range(self.sh.ncols):
-            if self.sh.cell(0, col_index).value == header:
-                return(col_index)
-
-    def add_material(self, film, path):
-        if film not in self.materials:
-            self.materials[film] =  material(path)
-
-    def set_wavelength(self, low, high):
-        self.low_wavelength = low
-        self.high_wavelength = high
-
-    def plot_clicked(self):
+        self.materials = []
+        self.mat_df = pd.DataFrame([], self.wavelength)
 
         self.add_material("TCO", './Materials/Semiconductor/TCO.csv')
         self.add_material("CdSe", './Materials/Semiconductor/CdSe.csv')
         self.add_material("CdTe", './Materials/Semiconductor/CdTe.csv')
         self.add_material("Air", './Materials/Semiconductor/Air.csv')
+
+    def add_material(self, film, path):
+        if film not in self.mat_df:
+            mat = Material(path, film, self.wavelength)
+            self.materials.append(mat)
+            self.mat_df = self.mat_df.join(mat.df1)
+
+    def set_wavelength(self, low, high, interval):
+        self.wavelength = np.arange(low, high, interval)
+        df = self.mat_df.reindex(self.wavelength)
+        df = df.interpolate('spline', order=3)
+        self.mat_df = df
+
+    def build_stack_array(self, layers):
+        self.index_array = np.array(self.mat_df[layers])
+
+    def plot_clicked(self):
         layers = ["Air", "CdTe", "CdSe", "TCO"]
-        index_array = np.array([self.materials["Air"].nc,self.materials["CdTe"].nc,self.materials["CdSe"].nc,self.materials["TCO"].nc]).T
-        self.wavelength = np.array(self.materials["TCO"].wv_raw)
-        # self.add_material("Sapphire", 'C:/Writing Programs/Optical Modeling/Materials/Dielectric/Sapphire.csv')
-        # layers = ["Sapphire"]
-        # self.wavelength = self.materials["Sapphire"].wv_raw
-        # wavelength = frange(self.low_wavelength, self.high_wavelength, self.increment)
-
-        # layer_map = [map(complex, self.materials[i].n_raw, self.materials[i].k_raw) for i in layers]
-
+        self.build_stack_array(layers)
 
         thkcdte = int(self.CdTeThickness.text())
         thkcdse = int(self.CdSeThickness.text())
 
         d_list = [inf, thkcdse, thkcdte, inf]
         theta0 = 0
-        # n_list = zip(*layer_map)
-        # n_list = map(interp(wv, ))
 
-        # R = [tmm.unpolarized_RT(next(n_list), d_list, theta0, wv)['R'] for wv in self.wavelength]
-        # T = [tmm.unpolarized_RT(next(n_list), d_list, theta0, wv)['T'] for wv in self.wavelength]
-
-        data = tmm.unpolarized_RT(index_array, d_list, theta0, self.wavelength)
+        data = tmm.unpolarized_RT(self.index_array, d_list, theta0, self.wavelength)
 
         r = data['R']
         t = data['T']
         a = 1-t-r
 
-        plots = self.static.axis.plot(self.wavelength, r, self.wavelength, t, self.wavelength, a)
+        plots = self.widget.axis.plot(self.wavelength, r, self.wavelength, t, self.wavelength, a)
+        self.widget.figure.legend(plots, ['R', 'T', 'A'])
+        self.widget.canvas.draw()
 
 
-        self.static.figure.legend(plots, ['R', 'T', 'A'])
-        self.static.canvas.draw()
-
-
-class material():
-    def __init__(self, path):
+class Material:
+    def __init__(self, path, name, wavelengths):
         f = pd.read_csv(path)
-        self.wv_raw = f.wv
-        self.nc = f.n+f.k*1j  #complex refractive index
-        #self.n_raw = f.n
-        #self.k_raw = f.k;
+        wv_raw = np.array(f.wv)
+        nc = np.array(f.n+f.k*1j)  # complex refractive index
+        self.name = name
+        self.f = interp1d(wv_raw, nc, kind='cubic')
+        self.min_wv = min(wv_raw)
+        self.max_wv = max(wv_raw)
+        self.df = pd.DataFrame(nc, wv_raw, [name])
+        self.df = self.df.reindex(wavelengths)
+        self.df = self.df1.interpolate('spline', order=3)
 
-
-
-    def interpolate(self, start_wavelength, end_wavelength, increment = .2):
-        start = max(floor(self.wv[0]/increment)*increment, start_wavelength)
-        end = min(ceil(self.wv[-1]/increment)*increment, end_wavelength)
-        wvrange = self.frange(start, end, increment)
-        self.wv = []
-        self.n = []
-        self.k = []
-        for i in wvrange:
-            self.wv.append(self.wvrange[i])
-            self.n.append(interp(i, self.wv_raw, self.n_raw))
-            self.k.append(interp(i, self.wv_raw, self.k_raw))
-
+    def interp(self, wavelengths):
+        wavelengths = wavelengths[np.nonzero(np.logical_and(wavelengths > self.min_wv, wavelengths < self.max_wv))]
+        nc = self.f(wavelengths)
+        self.df = pd.DataFrame(nc,wavelengths, [self.name])
 
 def frange(x, y, jump):
         while x < y:
