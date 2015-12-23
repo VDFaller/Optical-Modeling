@@ -275,7 +275,7 @@ def coh_tmm(pol, n_list, d_list, th_0, lam_vac):
     Mtilde[:] = np.identity(2, dtype=complex)
     M1[:,0][:,0] = exp(-1j*delta[:,i])
     M1[:,1][:,1] = exp(1j*delta[:,i])
-    #Mtilde = np.identity(2, dtype=complex)
+    # Mtilde = np.identity(2, dtype=complex)
     for i in range(1,num_layers-1):
         M_list = (1/t_list[:,i]).reshape(n_wv,1,1) * np.einsum('ijk,ikl->ijl',
             np.array([[exp(-1j*delta[:,i]), np.zeros((n_wv))], [np.zeros((n_wv)), exp(1j*delta[:,i])]], dtype=complex).T,
