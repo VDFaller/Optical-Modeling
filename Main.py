@@ -22,6 +22,9 @@ from matplotlib.figure import Figure
 from numpy.core.numeric import inf
 
 class MPLibWidget(QtWidgets.QWidget):
+    """
+    base MatPlotLib widget
+    """
     def __init__(self, parent=None):
         super(MPLibWidget, self).__init__(parent)
         
@@ -43,6 +46,7 @@ class MPLibWidget(QtWidgets.QWidget):
         self.layoutVertical.addWidget(self.mpl_toolbar)
         
     def on_key_press(self, event):
+        """not working"""
         print('you pressed', event.key)
         # implement the default mpl key press events described at
         # http://matplotlib.org/users/navigation_toolbar.html#navigation-keyboard-shortcuts
@@ -53,14 +57,14 @@ class MPLibWidget(QtWidgets.QWidget):
 
 
 class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
+    """My UI"""
     def __init__(self, parent=None):
         super(MW, self).__init__(parent)
         self.setupUi(self)
-
-        pathdict = {}
-        for d in os.listdir("C:/Writing Programs/Optical-Modeling/Materials/"):
+        pathdict = {}  # Sets up the list widgets with properly formatted csv's
+        for d in os.listdir("./Materials/"):
             pathdict[d]=[]
-            for file in os.listdir("C:/Writing Programs/Optical-Modeling/Materials/"+d):
+            for file in os.listdir("./Materials/"+d):
                 split = os.path.splitext(file)
                 if split[1] == ".csv":
                     pathdict[d].append(split[0])
@@ -78,37 +82,61 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
         self.model = Model()
 
     def swap_layer(self):
-        selected = self.tableWidget.selectionModel().selectedRows()[0].row()
+        """
+        swaps the layer selected in the table widget with the selected layer in the list widget
+        :return: None
+        """
+        selected = self.tableWidget.currentRow()
         ctab = self.tab_Library.currentIndex()
         name = self.tab_Library.tabText(ctab)
         list_widget = self.tab_Library.widget(ctab).findChild(QtWidgets.QListWidget)
-        txt = list_widget.currentItem().text()
-        if txt not in self.model.mat_df:
-            self.model.add_material(txt, './Materials/' + name + '/' + txt + '.csv')
-        txt = QtWidgets.QTableWidgetItem(txt)
-        self.tableWidget.setItem(selected, 1, txt)
+        item = list_widget.currentItem()
+        if item is not None:
+            txt = item.text()
+            if txt not in self.model.mat_df:
+                self.model.add_material(txt, './Materials/' + name + '/' + txt + '.csv')
+            txt = QtWidgets.QTableWidgetItem(txt)
+            self.tableWidget.setItem(selected, 1, txt)
 
     def add_layer(self):
-        self.tableWidget.insertRow(0)
-        rows = self.tableWidget.rowCount()-1
-        rows = QtWidgets.QTableWidgetItem(str(rows))
-        self.tableWidget.setItem(0, 0, rows)
+        """
+        Adds a new layer on top of current stack
+        :return: None
+        """
         current_tab = self.tab_Library.currentIndex()
         mat_type = self.tab_Library.tabText(current_tab)
         list_widget = self.tab_Library.widget(current_tab).findChild(QtWidgets.QListWidget)
-        txt = list_widget.currentItem().text()
-        if txt not in self.model.mat_df:
-            self.model.add_material(txt, './Materials/' + mat_type + '/' + txt + '.csv')
-        txt = QtWidgets.QTableWidgetItem(txt)
-        self.tableWidget.setItem(0, 1, txt)
-        self.tableWidget.setItem(0, 2, QtWidgets.QTableWidgetItem(str(100)))
+        item = list_widget.currentItem()
+
+        if item is not None:
+            self.tableWidget.insertRow(0)
+            rows = self.tableWidget.rowCount()-1
+            rows = QtWidgets.QTableWidgetItem(str(rows))
+            self.tableWidget.setItem(0, 0, rows)
+            txt = item.text()
+            if txt not in self.model.mat_df:
+                self.model.add_material(txt, './Materials/' + mat_type + '/' + txt + '.csv')
+            txt = QtWidgets.QTableWidgetItem(txt)
+            self.tableWidget.setItem(0, 1, txt)
+            self.tableWidget.setItem(0, 2, QtWidgets.QTableWidgetItem(str(100)))
 
     def remove_layer(self):
-        selected = self.tableWidget.selectionModel().selectedRows()
-        for i in selected:
-            self.tableWidget.removeRow(i.row())
+        """
+        Deletes a layer
+        :return: None
+        """
+        rows = self.tableWidget.rowCount()-1
+        #  selected = self.tableWidget.selectionModel().selectedRows()
+        selected = self.tableWidget.currentRow()
+        if selected != rows:
+            self.tableWidget.removeRow(selected)
 
     def plot_clicked(self):
+        """
+        Plots based on currently selected stack
+        :return: None
+        """
+
         layers = ['Air']
         d_list = [inf]
 
@@ -130,6 +158,9 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
 
 
 class Material:
+    """
+    Each csv read gives a new DataFrame with n vs wavelength
+    """
     def __init__(self, path, name, wavelengths):
         f = pd.read_csv(path)
         wv_raw = np.array(f.wv)
@@ -141,15 +172,23 @@ class Material:
         self.df = pd.DataFrame(nc, wv_raw, [name])
         # self.df = self.df.reindex(wavelengths)
         # self.df = self.df.interpolate('spline', order=3)
-        self.interp(wavelengths)
+        self.df = self.interp(wavelengths)
 
     def interp(self, wavelengths):
+        """
+        uses the self.f interpolation to reindex the dataframe
+        :param wavelengths: np.array of wavelengths
+        :return: a new dataframe
+        """
         wavelengths = wavelengths[np.nonzero(np.logical_and(wavelengths > self.min_wv, wavelengths < self.max_wv))]
         nc = self.f(wavelengths)
-        self.df = pd.DataFrame(nc, wavelengths, [self.name])
+        return pd.DataFrame(nc, wavelengths, [self.name])
 
 
 class Model:
+    """
+    Model using modification of SJByrnes tmm to allow simultaeous solution of multiple wavelengths
+    """
     def __init__(self):
         self.wavelength = np.arange(300, 1700, 1)
         self.increment = .2
@@ -160,27 +199,72 @@ class Model:
         self.add_material("TCO", './Materials/Semiconductor/TCO.csv')
 
     def add_material(self, film, path):
+        """
+        Puts a material into the mat_df dataframe
+        :param film: Name of the film, this should always be the name of the csv
+        :param path: path to the CSV
+        :return:
+        """
         if film not in self.mat_df:
             mat = Material(path, film, self.wavelength)
             self.materials.append(mat)
             self.mat_df = self.mat_df.join(mat.df)
 
     def set_wavelength(self, low, high, interval):
+        """
+        Sets a new wavelength range, not working the way I want it to yet
+        :param low: low wavelength
+        :param high: high wavelength
+        :param interval: interval
+        :return:
+        """
         self.wavelength = np.arange(low, high, interval)
         df = self.mat_df.reindex(self.wavelength)
         df = df.interpolate('spline', order=3)
         self.mat_df = df
 
-    def better_bruggeman(self, n1, n2, percent_included):
+    def bruggeman(self, n1, n2, percent_included):
+        """
+        Bruggeman Effective Medium Approximation
+        :param n1: Bulk material complex index
+        :param n2: Included material complex index
+        :param percent_included: 0-1
+        :return: dict of dielectric, index, and inputs
+        """
         p = n1/n2
         b = .25*((3*percent_included-1)*(1/p-p)+p)
         z = b + (b**2 + .5)**0.5
         e = z*n1*n2
         return {"e": e, "n": e**0.5, 'conc': percent_included, "n1": n1, 'n2': n2}
 
-    def run(self, layers, thicknesses, theta0):
+    def brug_transform(self, df, layer, incl, percent):
+        """
+        :param df: a given dataframe that you want to transform one of the layers
+        :param layer: which layer you want to transform
+        :param incl: included material complex index
+        :param percent: 0-1
+        :return: void
+        """
+        p = df[layer]/incl
+        b = .25*((3*percent-1)*(1/p-p)+p)
+        z = b + (b**2 + .5)**0.5
+        e = z*df[layer]*incl
+        n = e**.5
+        df[layer] = n
+
+    def run(self, layers, thicknesses, theta0, polarization=None):
+        """
+        runs the model with specified parameters
+        :param layers: a list of the layers as strings
+        :param thicknesses: list of thicknesses, first and last must be inf
+        :param theta0: input angle
+        :return: void
+        """
         self.index_array = np.array(self.mat_df[layers])
-        self.data = tmm.unpolarized_RT(self.index_array, thicknesses, theta0, self.wavelength)
+        if polarization is None:
+            self.data = tmm.unpolarized_RT(self.index_array, thicknesses, theta0, self.wavelength)
+        elif polarization in ['p', 's']:
+            self.data = tmm.coh_tmm(polarization, self.index_array, thicknesses, theta0, self.wavelength)
 
 
 if __name__ == '__main__':
@@ -188,15 +272,3 @@ if __name__ == '__main__':
     form = MW()
     form.show()
     app.exec_()
-
-
-# fig, ax = plt.subplots()
-# ax.set_xscale('log')
-# formatter = EngFormatter(unit='Hz', places=1)
-# ax.xaxis.set_major_formatter(formatter)
-#
-# xs = np.logspace(1, 9, 100)
-# ys = (0.8 + 0.4 * np.random.uniform(size=100)) * np.log10(xs)**2
-# ax.plot(xs, ys)
-#
-# plt.plot()
