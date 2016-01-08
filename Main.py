@@ -1,25 +1,37 @@
 """
 UI Program to create an optical modeler
+
+THINGS TO DO:
+Change join to merge and use wv not as an index
+add wavelength to UI
+make EMA dynamic
+make fit dynamic
+weight the fit to extrema
+    use a flat weighting vector with gaussians at extrema
+    parameterize the gaussians
+sav golay the data?
+
 """
 import sys
 import os
-import random
 import MainUI
 import tmm_core as tmm
-from math import floor, ceil
-
+import tkinter as tk
+from tkinter.filedialog import askopenfilename
 from PyQt5 import QtWidgets
 import pandas as pd
 import numpy as np
 import scipy as sp
-import scipy.optimize as so
 import matplotlib
+from numpy.core.numeric import inf
 from scipy.interpolate import interp1d
 matplotlib.use("Qt5Agg")  # required currently because matplotlib uses PyQt4
 from matplotlib.backend_bases import key_press_handler
 from matplotlib.backends.backend_qt5agg import (FigureCanvasQTAgg, NavigationToolbar2QT)
 from matplotlib.figure import Figure
-from numpy.core.numeric import inf
+from matplotlib import pyplot as plt
+import lmfit
+
 
 class MPLibWidget(QtWidgets.QWidget):
     """
@@ -36,8 +48,8 @@ class MPLibWidget(QtWidgets.QWidget):
         
         self.canvas.mpl_connect('key_press_event', self.on_key_press)
         
-        self.axis = self.figure.add_subplot(111)
-        self.axis.hold(False)
+        self.axes = self.figure.add_subplot(111)
+        # self.axes.hold(False)
 
         self.compute_initial_figure()
         
@@ -79,7 +91,11 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
         self.btnRemoveLayer.clicked.connect(self.remove_layer)
         self.btnSwapLayer.clicked.connect(self.swap_layer)
         self.btnPlot.clicked.connect(self.plot_clicked)
+        self.actionOpen.triggered.connect(self.open_data)
+        self.btnFit.clicked.connect(self.fit)
+
         self.model = Model()
+        self.data = None
 
     def swap_layer(self):
         """
@@ -97,6 +113,24 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
                 self.model.add_material(txt, './Materials/' + name + '/' + txt + '.csv')
             txt = QtWidgets.QTableWidgetItem(txt)
             self.tableWidget.setItem(selected, 1, txt)
+
+    def open_data(self):
+        root = tk.Tk()
+        root.withdraw()
+        root.lift()
+        filename = askopenfilename(initialdir='C:/WORK!!!!/VF088 - ARC Thickness/')
+
+        self.data = Data(filename, 'data', self.model.wavelength, 'R')
+        self.widget.axes.cla()
+        #self.data.df = self.data.norm(self.model.wavelength)
+        plot = self.widget.axes.plot(np.array(self.data.df.index), np.array(self.data.df), 'b-')
+        self.widget.canvas.draw()
+
+    def fit(self):
+        self.model.add_material('BK7', './Materials/Dielectric/BK7.csv')
+        self.model.add_material('SLG', './Materials/Dielectric/SLG.csv')
+        self.widget.axes.cla()
+        self.model.fit(self.data, self.widget)
 
     def add_layer(self):
         """
@@ -136,7 +170,6 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
         Plots based on currently selected stack
         :return: None
         """
-
         layers = ['Air']
         d_list = [inf]
 
@@ -146,13 +179,13 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
             d_list.append(int(self.tableWidget.item(i, 2).text()))
         d_list[-1] = inf
         theta = float(self.le_Theta0.text())*sp.pi/180
-
-        self.model.run(layers, d_list, theta)
+        self.model.layers = layers
+        self.model.run(d_list, theta)
         r = self.model.data['R']
         t = self.model.data['T']
         a = 1-t-r
-
-        plots = self.widget.axis.plot(self.model.wavelength, r, self.model.wavelength, t, self.model.wavelength, a)
+        self.widget.axes.cla()
+        plots = self.widget.axes.plot(self.model.wavelength, r, self.model.wavelength, t, self.model.wavelength, a)
         self.widget.figure.legend(plots, ['R', 'T', 'A'])
         self.widget.canvas.draw()
 
@@ -185,6 +218,108 @@ class Material:
         return pd.DataFrame(nc, wavelengths, [self.name])
 
 
+class Data:
+    def __init__(self, path, name, wavelengths, c_type):
+        f = pd.read_csv(path)
+        wv_raw = np.array(f.wv)
+        R = np.array(f.R)
+        self.name = name
+        self.df = pd.Series()
+        self.f = interp1d(wv_raw, R, kind='cubic')
+        self.min_wv = min(wv_raw)
+        self.max_wv = max(wv_raw)
+        self.df = pd.Series(data=R, index=wv_raw, name=name)
+        self.interp(wavelengths)
+
+    def interp(self, wavelengths):
+        wavelengths = wavelengths[np.nonzero(np.logical_and(wavelengths > self.min_wv, wavelengths < self.max_wv))]
+        data = self.f(wavelengths)
+        self.df = pd.Series(data=data, index=wavelengths, name=self.name)
+
+    def norm(self, wavelength, data_filter="Savitzky-Golay"):
+        df = self.df.ix[wavelength]
+        df = df - df.min()
+        df = df / df.max()
+        if data_filter == "Savitzky-Golay":
+            arr = self.savitzky_golay(y=np.array(df), window_size=11, order=3, deriv=0, rate=1)
+            df = pd.Series(arr, df.index, name=self.df.name)
+        return df
+
+    def savitzky_golay(self, y, window_size, order, deriv=0, rate=1):
+        r"""Smooth (and optionally differentiate) data with a Savitzky-Golay filter.
+        The Savitzky-Golay filter removes high frequency noise from data.
+        It has the advantage of preserving the original shape and
+        features of the signal better than other types of filtering
+        approaches, such as moving averages techniques.
+        Parameters
+        ----------
+        y : array_like, shape (N,)
+            the values of the time history of the signal.
+        window_size : int
+            the length of the window. Must be an odd integer number.
+        order : int
+            the order of the polynomial used in the filtering.
+            Must be less then `window_size` - 1.
+        deriv: int
+            the order of the derivative to compute (default = 0 means only smoothing)
+        rate: int
+            don't know
+        Returns
+        -------
+        ys : ndarray, shape (N)
+            the smoothed signal (or it's n-th derivative).
+        Notes
+        -----
+        The Savitzky-Golay is a type of low-pass filter, particularly
+        suited for smoothing noisy data. The main idea behind this
+        approach is to make for each point a least-square fit with a
+        polynomial of high order over a odd-sized window centered at
+        the point.
+        Examples
+        --------
+        t = np.linspace(-4, 4, 500)
+        y = np.exp( -t**2 ) + np.random.normal(0, 0.05, t.shape)
+        ysg = savitzky_golay(y, window_size=31, order=4)
+        import matplotlib.pyplot as plt
+        plt.plot(t, y, label='Noisy signal')
+        plt.plot(t, np.exp(-t**2), 'k', lw=1.5, label='Original signal')
+        plt.plot(t, ysg, 'r', label='Filtered signal')
+        plt.legend()
+        plt.show()
+        References
+        ----------
+        .. [1] A. Savitzky, M. J. E. Golay, Smoothing and Differentiation of
+           Data by Simplified Least Squares Procedures. Analytical
+           Chemistry, 1964, 36 (8), pp 1627-1639.
+        .. [2] Numerical Recipes 3rd Edition: The Art of Scientific Computing
+           W.H. Press, S.A. Teukolsky, W.T. Vetterling, B.P. Flannery
+           Cambridge University Press ISBN-13: 9780521880688
+        """
+        import numpy as np
+        from math import factorial
+
+        try:
+            window_size = np.abs(np.int(window_size))
+            order = np.abs(np.int(order))
+        except (ValueError, msg):
+            raise ValueError("window_size and order have to be of type int")
+        if window_size % 2 != 1 or window_size < 1:
+            raise TypeError("window_size size must be a positive odd number")
+        if window_size < order + 2:
+            raise TypeError("window_size is too small for the polynomials order")
+        order_range = range(order+1)
+        half_window = (window_size -1) // 2
+        # precompute coefficients
+        b = np.mat([[k**i for i in order_range] for k in range(-half_window, half_window+1)])
+        m = np.linalg.pinv(b).A[deriv] * rate**deriv * factorial(deriv)
+        # pad the signal at the extremes with
+        # values taken from the signal itself
+        firstvals = y[0] - np.abs(y[1:half_window+1][::-1] - y[0])
+        lastvals = y[-1] + np.abs(y[-half_window-1:-1][::-1] - y[-1])
+        y = np.concatenate((firstvals, y, lastvals))
+        return np.convolve(m[::-1], y, mode='valid')
+
+
 class Model:
     """
     Model using modification of SJByrnes tmm to allow simultaeous solution of multiple wavelengths
@@ -197,6 +332,7 @@ class Model:
         self.mat_df = pd.DataFrame(1+0j, self.wavelength, ['Air'])
         self.data = {}
         self.add_material("TCO", './Materials/Semiconductor/TCO.csv')
+        self.layers = []
 
     def add_material(self, film, path):
         """
@@ -252,20 +388,66 @@ class Model:
         n = e**.5
         df[layer] = n
 
-    def run(self, layers, thicknesses, theta0, polarization=None):
+    def run(self, thicknesses, theta0, polarization=None):
         """
         runs the model with specified parameters
-        :param layers: a list of the layers as strings
         :param thicknesses: list of thicknesses, first and last must be inf
         :param theta0: input angle
+        :param polarization: polarization state 's', 'p', or None
         :return: void
         """
-        self.index_array = np.array(self.mat_df[layers])
+        self.index_array = np.array(self.mat_df[self.layers])
         if polarization is None:
             self.data = tmm.unpolarized_RT(self.index_array, thicknesses, theta0, self.wavelength)
         elif polarization in ['p', 's']:
             self.data = tmm.coh_tmm(polarization, self.index_array, thicknesses, theta0, self.wavelength)
 
+    def get_R(self, wavelengths, thickness, void_percent):
+        thicknesses = [inf, thickness, inf]
+        mat = self.mat_df.ix[wavelengths]
+        mat = mat[self.layers]
+        self.index_array = np.array(mat)
+        theta0 = 45*sp.pi/180
+        self.brug_transform(mat, self.layers[1], mat['Air'], void_percent)
+        self.data = tmm.unpolarized_RT(self.index_array, thicknesses, theta0, wavelengths)
+        R = self.data['R']
+        R -= min(R)
+        R /= max(R)
+        return R
+
+    def norm(self, wavelength):
+        df = self.mat_df.ix[wavelength]
+        df = df - df.min()
+        df = df / df.max()
+        return df
+
+    def fit(self, data, widget):
+        self.layers = ['Air', 'BK7', 'SLG']
+        ax_limits = widget.axes.axis()
+
+        x_min = round(max(ax_limits[0], data.df.index.min()))
+        x_max = round(min(ax_limits[1], data.df.index.max()))
+        wv = np.arange(x_min, x_max)
+        print(ax_limits)
+        print(x_min, x_max)
+        mod = lmfit.Model(self.get_R, ['wavelengths'], ['thickness', 'void_percent'])
+        mod.set_param_hint('thickness', value=130, min=50, max=250)
+        mod.set_param_hint('void_percent', value=.15, min=.05, max=.5)
+
+        R = data.norm(wv)
+        result = mod.fit(R, wavelengths=wv)
+
+        RMSE = (sp.sum(result.residual**2)/(result.residual.size-2))**0.5
+        bf_values = result.best_values
+        bf_str = 'thk: ' + str(round(bf_values['thickness'])) + ", Void %: " + str(round(bf_values['void_percent']*100, 2))
+        txt_spot = wv.min()-100 + (wv.max()-wv.min()) / 2
+
+        ax = widget.figure.axes[0]
+        result.plot_fit(ax=ax, datafmt='b+', initfmt='r--', fitfmt='g-')
+        ax.text(txt_spot, .9, "RMSE: "+str(round(RMSE, 3)))
+        ax.text(txt_spot, .85, bf_str)
+        widget.canvas.draw()
+        print(result.fit_report())
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
