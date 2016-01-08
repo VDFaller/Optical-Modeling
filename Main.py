@@ -10,6 +10,7 @@ weight the fit to extrema
     use a flat weighting vector with gaussians at extrema
     parameterize the gaussians
 sav golay the data?
+change the brug tranform to return a df
 
 """
 import sys
@@ -122,8 +123,7 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
 
         self.data = Data(filename, 'data', self.model.wavelength, 'R')
         self.widget.axes.cla()
-        #self.data.df = self.data.norm(self.model.wavelength)
-        plot = self.widget.axes.plot(np.array(self.data.df.index), np.array(self.data.df), 'b-')
+        plot = self.widget.axes.plot(np.array(self.data.series.index), np.array(self.data.series), 'b-')
         self.widget.canvas.draw()
 
     def fit(self):
@@ -224,26 +224,27 @@ class Data:
         wv_raw = np.array(f.wv)
         R = np.array(f.R)
         self.name = name
-        self.df = pd.Series()
         self.f = interp1d(wv_raw, R, kind='cubic')
         self.min_wv = min(wv_raw)
         self.max_wv = max(wv_raw)
-        self.df = pd.Series(data=R, index=wv_raw, name=name)
+        self.raw_series = pd.Series(data=R, index=wv_raw, name=name)
         self.interp(wavelengths)
+        self.series = self.norm(wavelengths)
 
     def interp(self, wavelengths):
         wavelengths = wavelengths[np.nonzero(np.logical_and(wavelengths > self.min_wv, wavelengths < self.max_wv))]
         data = self.f(wavelengths)
-        self.df = pd.Series(data=data, index=wavelengths, name=self.name)
+        self.raw_series = pd.Series(data=data, index=wavelengths, name=self.name)
 
     def norm(self, wavelength, data_filter="Savitzky-Golay"):
-        df = self.df.ix[wavelength]
-        df = df - df.min()
-        df = df / df.max()
+        s = self.raw_series.ix[wavelength]
         if data_filter == "Savitzky-Golay":
-            arr = self.savitzky_golay(y=np.array(df), window_size=11, order=3, deriv=0, rate=1)
-            df = pd.Series(arr, df.index, name=self.df.name)
-        return df
+            arr = self.savitzky_golay(y=np.array(s), window_size=21, order=3, deriv=0, rate=1)
+            s = pd.Series(arr, s.index, name=self.raw_series.name+' processed')
+        s = s.dropna()
+        s = s - s.min()
+        s = s / s.max()
+        return s
 
     def savitzky_golay(self, y, window_size, order, deriv=0, rate=1):
         r"""Smooth (and optionally differentiate) data with a Savitzky-Golay filter.
@@ -346,19 +347,6 @@ class Model:
             self.materials.append(mat)
             self.mat_df = self.mat_df.join(mat.df)
 
-    def set_wavelength(self, low, high, interval):
-        """
-        Sets a new wavelength range, not working the way I want it to yet
-        :param low: low wavelength
-        :param high: high wavelength
-        :param interval: interval
-        :return:
-        """
-        self.wavelength = np.arange(low, high, interval)
-        df = self.mat_df.reindex(self.wavelength)
-        df = df.interpolate('spline', order=3)
-        self.mat_df = df
-
     def bruggeman(self, n1, n2, percent_included):
         """
         Bruggeman Effective Medium Approximation
@@ -402,13 +390,13 @@ class Model:
         elif polarization in ['p', 's']:
             self.data = tmm.coh_tmm(polarization, self.index_array, thicknesses, theta0, self.wavelength)
 
-    def get_R(self, wavelengths, thickness, void_percent):
+    def get_R(self, wavelengths, thickness, theta, void_percent):
         thicknesses = [inf, thickness, inf]
         mat = self.mat_df.ix[wavelengths]
         mat = mat[self.layers]
-        self.index_array = np.array(mat)
-        theta0 = 45*sp.pi/180
+        theta0 = theta*sp.pi/180
         self.brug_transform(mat, self.layers[1], mat['Air'], void_percent)
+        self.index_array = np.array(mat)
         self.data = tmm.unpolarized_RT(self.index_array, thicknesses, theta0, wavelengths)
         R = self.data['R']
         R -= min(R)
@@ -425,16 +413,16 @@ class Model:
         self.layers = ['Air', 'BK7', 'SLG']
         ax_limits = widget.axes.axis()
 
-        x_min = round(max(ax_limits[0], data.df.index.min()))
-        x_max = round(min(ax_limits[1], data.df.index.max()))
+        x_min = round(max(ax_limits[0], data.series.index.min()))
+        x_max = round(min(ax_limits[1], data.series.index.max()))
         wv = np.arange(x_min, x_max)
-        print(ax_limits)
-        print(x_min, x_max)
-        mod = lmfit.Model(self.get_R, ['wavelengths'], ['thickness', 'void_percent'])
+
+        mod = lmfit.Model(self.get_R, ['wavelengths'], ['thickness', 'theta', 'void_percent'])
         mod.set_param_hint('thickness', value=130, min=50, max=250)
+        mod.set_param_hint('theta', value=45, min=44, max=46, vary=False)
         mod.set_param_hint('void_percent', value=.15, min=.05, max=.5)
 
-        R = data.norm(wv)
+        R = data.series.ix[wv]
         result = mod.fit(R, wavelengths=wv)
 
         RMSE = (sp.sum(result.residual**2)/(result.residual.size-2))**0.5
