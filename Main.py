@@ -22,6 +22,7 @@ from tkinter.filedialog import askopenfilename
 from PyQt5 import QtWidgets
 import pandas as pd
 import numpy as np
+from math import factorial
 import scipy as sp
 import matplotlib
 from numpy.core.numeric import inf
@@ -74,7 +75,8 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
     def __init__(self, parent=None):
         super(MW, self).__init__(parent)
         self.setupUi(self)
-        pathdict = {}  # Sets up the list widgets with properly formatted csv's
+        # Sets up the list widgets with properly formatted csv's
+        pathdict = {}
         for d in os.listdir("./Materials/"):
             pathdict[d]=[]
             for file in os.listdir("./Materials/"+d):
@@ -116,6 +118,11 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
             self.tableWidget.setItem(selected, 1, txt)
 
     def open_data(self):
+        """
+        opens a csv file, then runs a sav golay on it
+        assigns data to the widget, then plots the sav'd plot
+        :return:
+        """
         root = tk.Tk()
         root.withdraw()
         root.lift()
@@ -127,10 +134,18 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
         self.widget.canvas.draw()
 
     def fit(self):
-        self.model.add_material('BK7', './Materials/Dielectric/BK7.csv')
-        self.model.add_material('SLG', './Materials/Dielectric/SLG.csv')
-        self.widget.axes.cla()
-        self.model.fit(self.data, self.widget)
+        """
+        just a UI call for model.fit()
+        currently always adds BK7 and SLG materials because it's hard coded
+        :return:
+        """
+        if self.data is None:
+            print("No Data to fit")
+        else:
+            self.model.add_material('BK7', './Materials/Dielectric/BK7.csv')
+            self.model.add_material('SLG', './Materials/Dielectric/SLG.csv')
+            self.widget.axes.cla()
+            self.model.fit(self.data, self.widget)
 
     def add_layer(self):
         """
@@ -230,13 +245,28 @@ class Data:
         self.raw_series = pd.Series(data=R, index=wv_raw, name=name)
         self.interp(wavelengths)
         self.series = self.norm(wavelengths)
+        self.weight_amp = 100
+        self.weight_wid = 30
+        self.weight_cen = 597
+        self.weight = self.get_weighting(self.weight_cen, self.weight_amp, self.weight_wid)
 
     def interp(self, wavelengths):
+        """
+        :param wavelengths:list or array of wavelengths to interpolate over
+        :return: should probably make this return instead of reassign
+        """
         wavelengths = wavelengths[np.nonzero(np.logical_and(wavelengths > self.min_wv, wavelengths < self.max_wv))]
         data = self.f(wavelengths)
         self.raw_series = pd.Series(data=data, index=wavelengths, name=self.name)
 
     def norm(self, wavelength, data_filter="Savitzky-Golay"):
+        """
+        normalizer for the data with the optional default Sav-Golay filter
+        :param wavelength: list or array of wavelengths to us
+        :param data_filter: raw if other than Savitzky-Golay,
+            otherwise calls S-G
+        :return:
+        """
         s = self.raw_series.ix[wavelength]
         if data_filter == "Savitzky-Golay":
             arr = self.savitzky_golay(y=np.array(s), window_size=21, order=3, deriv=0, rate=1)
@@ -245,6 +275,11 @@ class Data:
         s = s - s.min()
         s = s / s.max()
         return s
+
+    def get_weighting(self, cen, amp, wid):
+        x = np.array(self.series.index)
+        g = amp * np.exp(-(x-cen)**2 /wid)
+        return pd.Series(1+g, x, name="Weighting")
 
     def savitzky_golay(self, y, window_size, order, deriv=0, rate=1):
         r"""Smooth (and optionally differentiate) data with a Savitzky-Golay filter.
@@ -296,13 +331,11 @@ class Data:
            W.H. Press, S.A. Teukolsky, W.T. Vetterling, B.P. Flannery
            Cambridge University Press ISBN-13: 9780521880688
         """
-        import numpy as np
-        from math import factorial
 
         try:
             window_size = np.abs(np.int(window_size))
             order = np.abs(np.int(order))
-        except (ValueError, msg):
+        except ValueError:
             raise ValueError("window_size and order have to be of type int")
         if window_size % 2 != 1 or window_size < 1:
             raise TypeError("window_size size must be a positive odd number")
@@ -422,7 +455,7 @@ class Model:
         mod.set_param_hint('theta', value=45, min=44, max=46, vary=False)
         mod.set_param_hint('void_percent', value=.15, min=.05, max=.5)
 
-        R = data.series.ix[wv]
+        R = data.norm(wv, False)
         result = mod.fit(R, wavelengths=wv)
 
         RMSE = (sp.sum(result.residual**2)/(result.residual.size-2))**0.5

@@ -25,16 +25,18 @@ import numpy as np
 import sys
 EPSILON = sys.float_info.epsilon # typical floating-point calculation error
 
-def make_2x2_array(a, b, c, d, dtype=complex):
+def make_2x2_array(a, b, c, d, dtype=float):
     """
     Makes a 2x2 numpy array of [[a,b],[c,d]]
     
     Same as "numpy.array([[a,b],[c,d]], dtype=float)", but ten times faster
     """
-    ac =np.concatenate((a[:,:,np.newaxis],c[:,:,np.newaxis]),axis=-1)
-    bd =np.concatenate((b[:,:,np.newaxis],d[:,:,np.newaxis]),axis=-1)
-    abcd =np.concatenate((ac[:,:,:,np.newaxis],bd[:,:,:,np.newaxis]),axis=-1)
-    return abcd
+    my_array = np.empty((2,2),dtype=dtype)
+    my_array[0,0] = a
+    my_array[0,1] = b
+    my_array[1,0] = c
+    my_array[1,1] = d
+    return my_array
 
 def snell(n_1,n_2,th_1):
     """
@@ -58,7 +60,7 @@ def list_snell(n_list,th_0):
     #give different results e.g. for arcsin(2).)
     #Use real_if_close because e.g. arcsin(2 + 1e-17j) is very different from
     #arcsin(2) due to branch cut
-    return sp.arcsin(np.real_if_close((n_list[:,0]*np.sin(th_0))[:,None] / n_list))
+    return sp.arcsin(np.real_if_close(n_list[0]*np.sin(th_0) / n_list))
 
 
 def interface_r(polarization, n_i, n_f, th_i, th_f):
@@ -204,22 +206,21 @@ def coh_tmm(pol, n_list, d_list, th_0, lam_vac):
 
     """
     #convert lists to numpy arrays if they're not already.
-    #n_list=array(n_list)
+    n_list=array(n_list)
     d_list=array(d_list,dtype=float)
 
     #input tests
-    #if ((hasattr(lam_vac, 'size') and lam_vac.size > 1)
-    #      or (hasattr(th_0, 'size') and th_0.size > 1)):
-    #    raise ValueError('This function is not vectorized; you need to run one '
-    #                     'calculation at a time (1 wavelength, 1 angle, etc.)')
-    #if (n_list.ndim != 1) or (d_list.ndim != 1) or (n_list.size != d_list.size):
-    #    raise ValueError("Problem with n_list or d_list!")
+    if ((hasattr(lam_vac, 'size') and lam_vac.size > 1)
+          or (hasattr(th_0, 'size') and th_0.size > 1)):
+        raise ValueError('This function is not vectorized; you need to run one '
+                         'calculation at a time (1 wavelength, 1 angle, etc.)')
+    if (n_list.ndim != 1) or (d_list.ndim != 1) or (n_list.size != d_list.size):
+        raise ValueError("Problem with n_list or d_list!")
     if (d_list[0] != inf) or (d_list[-1] != inf):
         raise ValueError('d_list must start and end with inf!')
-    #if abs((n_list[0]*np.sin(th_0)).imag) > 100*EPSILON:
-        #raise ValueError('Error in n0 or th0!')
-    num_layers = n_list.shape[1]
-    n_wv = n_list.shape[0]
+    if abs((n_list[0]*np.sin(th_0)).imag) > 100*EPSILON:
+        raise ValueError('Error in n0 or th0!')
+    num_layers = n_list.size
 
     #th_list is a list with, for each layer, the angle that the light travels
     #through the layer. Computed with Snell's law. Note that the "angles" may be
@@ -228,7 +229,7 @@ def coh_tmm(pol, n_list, d_list, th_0, lam_vac):
 
     #kz is the z-component of (complex) angular wavevector for forward-moving
     #wave. Positive imaginary part means decaying.
-    kz_list = (2 * np.pi * n_list * np.cos(th_list)) / lam_vac[:, None]
+    kz_list = 2 * np.pi * n_list * cos(th_list) / lam_vac
 
     #delta is the total phase accrued by traveling through a given layer.
     #ignore warning about inf multiplication
@@ -240,80 +241,68 @@ def coh_tmm(pol, n_list, d_list, th_0, lam_vac):
     # errors. The criterion imag(delta) > 35 corresponds to single-pass
     # transmission < 1e-30 --- small enough that the exact value doesn't
     # matter.
-    if (delta.imag>35).any():
-        delta.imag[delta.imag>35]=35
-        if 'opacity_warning' not in globals():
-            global opacity_warning
-            opacity_warning = True
-            print("Warning: Layers that are almost perfectly opaque "
-                  "are modified to be slightly transmissive, "
-                  "allowing 1 photon in 10^30 to pass through. It's "
-                  "for numerical stability. This warning will not "
-                  "be shown again.")
+    for i in range(1, num_layers-1):
+        if delta[i].imag > 35:
+            delta[i] = delta[i].real + 35j
+            if 'opacity_warning' not in globals():
+                global opacity_warning
+                opacity_warning = True
+                print("Warning: Layers that are almost perfectly opaque "
+                      "are modified to be slightly transmissive, "
+                      "allowing 1 photon in 10^30 to pass through. It's "
+                      "for numerical stability. This warning will not "
+                      "be shown again.")
     
     #t_list[i,j] and r_list[i,j] are transmission and reflection amplitudes,
     #respectively, coming from i, going to j. Only need to calculate this when
     #j=i+1. (2D array is overkill but helps avoid confusion.)
-    #t_list = zeros((num_layers,num_layers),dtype=complex)
-    #r_list = zeros((num_layers,num_layers),dtype=complex)
-    t_list = np.zeros((n_wv,num_layers),dtype=complex)
-    r_list = np.zeros((n_wv,num_layers),dtype=complex)
+    t_list = zeros((num_layers,num_layers),dtype=complex)
+    r_list = zeros((num_layers,num_layers),dtype=complex)
     for i in range(num_layers-1):
-        t_list[:, i] = interface_t(pol, n_list[:,i], n_list[:,i+1], th_list[:,i], th_list[:,i+1])
-        r_list[:, i] = interface_r(pol, n_list[:,i], n_list[:,i+1], th_list[:,i], th_list[:,i+1])
+        t_list[i,i+1] = interface_t(pol,n_list[i],n_list[i+1],
+                                     th_list[i],th_list[i+1])
+        r_list[i,i+1] = interface_r(pol,n_list[i],n_list[i+1],
+                                     th_list[i],th_list[i+1])
     #At the interface between the (n-1)st and nth material, let v_n be the
     #amplitude of the wave on the nth side heading forwards (away from the
     #boundary), and let w_n be the amplitude on the nth side heading backwards
     #(towards the boundary). Then (v_n,w_n) = M_n (v_{n+1},w_{n+1}). M_n is
-    #Mn[n]. M_0 and M_{num_layers-1} are not defined.
+    #M_list[n]. M_0 and M_{num_layers-1} are not defined.
     #My M is a bit different than Sernelius's, but Mtilde is the same.
-	
-    #M1 = np.array([[exp(-1j*delta[:,i]), np.zeros((n_wv))], [np.zeros((n_wv)), exp(1j*delta[:,i])]], dtype=complex).T
-    #M2 = np.array([[np.ones((n_wv)), r_list[:,i]], [r_list[:,i], np.ones((n_wv))]], dtype=complex).T
-    Mtilde = np.zeros((n_wv,2,2), dtype=complex)
-    Mtilde[:] = np.identity(2, dtype=complex)
-    #M1[:,0][:,0] = exp(-1j*delta[:,i])
-    #M1[:,1][:,1] = exp(1j*delta[:,i])
-    # Mtilde = np.identity(2, dtype=complex)
+    M_list = zeros((num_layers,2,2),dtype=complex)
     for i in range(1,num_layers-1):
-        '''This is impossible to read'''
-        Mn = (1/t_list[:,i]).reshape(n_wv,1,1) * np.einsum('ijk,ikl->ijl',
-            np.array([[exp(-1j*delta[:,i]), np.zeros((n_wv))], [np.zeros((n_wv)), exp(1j*delta[:,i])]], dtype=complex).T,
-            np.array([[np.ones((n_wv)), r_list[:,i]], [r_list[:,i], np.ones((n_wv))]], dtype=complex).T
-        )
-        Mtilde = np.einsum('ijk,ikl->ijl', Mtilde, Mn)
-        
-    Mtilde = np.einsum('ijk,ikl->ijl', np.array([[np.ones((n_wv)), r_list[:,0]], [r_list[:,0], np.ones((n_wv))]], dtype=complex).T/t_list[:,0].reshape(n_wv,1,1), Mtilde)
+        M_list[i] = (1/t_list[i,i+1]) * np.dot(
+            make_2x2_array(exp(-1j*delta[i]), 0, 0, exp(1j*delta[i]),
+                           dtype=complex),
+            make_2x2_array(1, r_list[i,i+1], r_list[i,i+1], 1, dtype=complex))
+    Mtilde = make_2x2_array(1,0,0,1, dtype=complex)
+    for i in range(1,num_layers-1):
+        Mtilde = np.dot(Mtilde,M_list[i])
+    Mtilde = np.dot(make_2x2_array(1, r_list[0,1], r_list[0,1] ,1,
+                                   dtype=complex)/t_list[0,1], Mtilde)
 
     #Net complex transmission and reflection amplitudes
-    r=Mtilde[:,1,0]/Mtilde[:,0,0]
-    t=1/Mtilde[:,0,0]
+    r=Mtilde[1,0]/Mtilde[0,0]
+    t=1/Mtilde[0,0]
 
     #vw_list[n] = [v_n, w_n]. v_0 and w_0 are undefined because the 0th medium
     #has no left interface.
-    #===========================================================================
-    # vw_list=zeros((num_layers,2), dtype=complex)
-    # vw = array([[t],np.zeros((n_wv))])
-    # vw_list[-1,:] = np.transpose(vw)
-    # for i in range(num_layers-2,0,-1):
-    #     vw = np.dot(Mn[i], vw)
-    #     vw_list[i,:] = np.transpose(vw)
-    #===========================================================================
+    vw_list=zeros((num_layers,2), dtype=complex)
+    vw = array([[t],[0]])
+    vw_list[-1,:] = np.transpose(vw)
+    for i in range(num_layers-2,0,-1):
+        vw = np.dot(M_list[i], vw)
+        vw_list[i,:] = np.transpose(vw)
 
     #Net transmitted and reflected power, as a proportion of the incoming light
     #power.
     R = R_from_r(r)
-    T = T_from_t(pol, t, n_list[:,0], n_list[:,-1], th_list[:,0], th_list[:,-1])
-    #===========================================================================
-    # power_entering = power_entering_from_r(
-    #                             pol, r, n_list[0], th_0)
-    #===========================================================================
+    T = T_from_t(pol, t, n_list[0], n_list[-1], th_0, th_list[-1])
+    power_entering = power_entering_from_r(
+                                pol, r, n_list[0], th_0)
 
-    return {'r': r, 't': t, 'R': R, 'T': T, 
-            #===================================================================
-            # 'power_entering': power_entering,'vw_list': vw_list, 
-            #===================================================================
-            'kz_list': kz_list, 'th_list': th_list,
+    return {'r': r, 't': t, 'R': R, 'T': T, 'power_entering': power_entering,
+            'vw_list': vw_list, 'kz_list': kz_list, 'th_list': th_list,
 			't_list': t_list, 'r_list': r_list,
             'pol': pol, 'n_list': n_list, 'd_list': d_list, 'th_0': th_0,
             'lam_vac':lam_vac}
