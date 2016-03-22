@@ -21,6 +21,7 @@ from numpy import cos, inf, zeros, array, exp, conj, nan, isnan
 
 import scipy as sp
 import numpy as np
+import pandas as pd
 
 import sys
 EPSILON = sys.float_info.epsilon # typical floating-point calculation error
@@ -348,6 +349,16 @@ def unpolarized_RT(n_list, d_list, th_0, lam_vac):
     R = (s_data['R'] + p_data['R']) / 2.
     T = (s_data['T'] + p_data['T']) / 2.
     return {'R': R, 'T': T}
+	
+def get_RT(n_array, d_list, theta, wavelengths):
+    s_data = coh_tmm('s', n_array, d_list, theta, wavelengths)
+    p_data = coh_tmm('p', n_array, d_list, theta, wavelengths)
+    psi = np.arctan(abs(p_data['r']/s_data['r']))*180/sp.pi
+    delta = -np.angle(-p_data['r']/s_data['r'])*180/sp.pi
+    u_data = {'R':(s_data['R']+p_data['R'])/2, 'T':(s_data['R']+p_data['R'])/2}
+    df = pd.DataFrame(np.array([s_data['R'], s_data['T'], p_data['R'], p_data['T'], u_data['R'], u_data['T'], psi, delta]).T,
+        index=[wavelengths], columns=['Rs', 'Ts', 'Rp', 'Tp', 'R', 'T', 'Psi', 'Delta'])
+    return df
 
 def position_resolved(layer, dist, coh_tmm_data):
     """

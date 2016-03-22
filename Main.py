@@ -4,12 +4,6 @@ UI Program to create an optical modeler
 THINGS TO DO:
 Change join to merge and use wv not as an index
 add wavelength to UI
-make EMA dynamic
-make fit dynamic
-weight the fit to extrema
-    use a flat weighting vector with gaussians at extrema
-    parameterize the gaussians
-sav golay the data?
 change the brug tranform to return a df
 
 """
@@ -24,14 +18,13 @@ import pandas as pd
 import numpy as np
 from math import factorial
 import scipy as sp
-import matplotlib
 from numpy.core.numeric import inf
 from scipy.interpolate import interp1d
+import matplotlib
 matplotlib.use("Qt5Agg")  # required currently because matplotlib uses PyQt4
 from matplotlib.backend_bases import key_press_handler
 from matplotlib.backends.backend_qt5agg import (FigureCanvasQTAgg, NavigationToolbar2QT)
 from matplotlib.figure import Figure
-from matplotlib import pyplot as plt
 import lmfit
 
 
@@ -78,11 +71,12 @@ class MW(QtWidgets.QMainWindow, MainUI.Ui_MainWindow):
         # Sets up the list widgets with properly formatted csv's
         pathdict = {}
         for d in os.listdir("./Materials/"):
-            pathdict[d]=[]
-            for file in os.listdir("./Materials/"+d):
-                split = os.path.splitext(file)
-                if split[1] == ".csv":
-                    pathdict[d].append(split[0])
+            if os.path.isdir("./Materials/"+d):
+                pathdict[d]=[]
+                for file in os.listdir("./Materials/"+d):
+                    split = os.path.splitext(file)
+                    if split[1] == ".csv":
+                        pathdict[d].append(split[0])
         self.lwDielectric.addItems(pathdict['Dielectric'])
         self.lwMetal.addItems(pathdict['Metal'])
         self.lwOther.addItems(pathdict['Other'])
@@ -247,7 +241,7 @@ class Data:
         self.series = self.norm(wavelengths)
         self.weight_amp = 100
         self.weight_wid = 30
-        self.weight_cen = 597
+        self.weight_cen = 625
         self.weight = self.get_weighting(self.weight_cen, self.weight_amp, self.weight_wid)
 
     def interp(self, wavelengths):
@@ -359,7 +353,7 @@ class Model:
     Model using modification of SJByrnes tmm to allow simultaeous solution of multiple wavelengths
     """
     def __init__(self):
-        self.wavelength = np.arange(300, 1700, 1)
+        self.wavelength = np.arange(250, 1700, 1)
         self.increment = .2
         self.index_array = np.array([])
         self.materials = []
@@ -453,7 +447,7 @@ class Model:
         mod = lmfit.Model(self.get_R, ['wavelengths'], ['thickness', 'theta', 'void_percent'])
         mod.set_param_hint('thickness', value=130, min=50, max=250)
         mod.set_param_hint('theta', value=45, min=44, max=46, vary=False)
-        mod.set_param_hint('void_percent', value=.15, min=.05, max=.5)
+        mod.set_param_hint('void_percent', value=.15, min=.1, max=.2)
 
         R = data.norm(wv, False)
         result = mod.fit(R, wavelengths=wv)
